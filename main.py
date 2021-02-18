@@ -1,63 +1,79 @@
+"""Real-time dog filter
+
+Move your face around and a dog filter will be applied to your face if it is not out-of-bounds. With the test frame in focus, hit `q` to exit. Note that typing `q` into your terminal will do nothing.
+"""
+
 import numpy as np
 import cv2
 
-face_cascade = cv2.CascadeClassifier('files/haarcascade_frontalface_default.xml')
-specs_ori = cv2.imread('files/lunettes.png', -1)
-cigar_ori = cv2.imread('files/joint.png',-1)
 
-cap = cv2.VideoCapture(0) #webcame video
-# cap = cv2.VideoCapture('jj.mp4') #any Video file also
-cap.set(cv2.CAP_PROP_FPS, 30)
+def apply_mask(face: np.array, mask: np.array) -> np.array:
+    """Add the mask to the provided face, and return the face with mask."""
+    mask_h, mask_w, _ = mask.shape
+    face_h, face_w, _ = face.shape
 
+    # Resize the mask to fit on face
+    factor = min(face_h / mask_h, face_w / mask_w)
+    new_mask_w = int(factor * mask_w)
+    new_mask_h = int(factor * mask_h)
+    new_mask_shape = (new_mask_w, new_mask_h)
+    resized_mask = cv2.resize(mask, new_mask_shape)
 
+    # Add mask to face - ensure mask is centered
+    face_with_mask = face.copy()
+    non_white_pixels = (resized_mask < 250).all(axis=2)
+    off_h = int((face_h - new_mask_h) / 2)
+    off_w = int((face_w - new_mask_w) / 2)
+    face_with_mask[off_h: off_h+new_mask_h, off_w: off_w+new_mask_w][non_white_pixels] = \
+         resized_mask[non_white_pixels]
 
-def transparentOverlay(src, overlay, pos=(0, 0), scale=1):
-    overlay = cv2.resize(overlay, (0, 0), fx=scale, fy=scale)
-    h, w, _ = overlay.shape  # Size of foreground
-    rows, cols, _ = src.shape  # Size of background Image
-    y, x = pos[0], pos[1]  # Position of foreground/overlay image
+    return face_with_mask
 
-    # loop over all pixels and apply the blending equation
-    for i in range(h):
-        for j in range(w):
-            if x + i >= rows or y + j >= cols:
+def main():
+    cap = cv2.VideoCapture(0)
+
+    # load mask
+    mask = cv2.imread('files/dog.png')
+
+    # initialize front face classifier
+    cascade = cv2.CascadeClassifier("files/haarcascade_frontalface_default.xml")
+
+    while(True):
+        # Capture frame-by-frame
+        ret, frame = cap.read()
+        frame_h, frame_w, _ = frame.shape
+
+        # Convert to black-and-white
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blackwhite = cv2.equalizeHist(gray)
+
+        # Detect faces
+        rects = cascade.detectMultiScale(
+	blackwhite, scaleFactor=1.3, minNeighbors=4, minSize=(30, 30),
+        flags=cv2.CASCADE_SCALE_IMAGE)
+
+        # Add mask to faces
+        for x, y, w, h in rects:
+            # crop a frame slightly larger than the face
+            y0, y1 = int(y - 0.25*h), int(y + 0.75*h)
+            x0, x1 = x, x + w
+
+            # give up if the cropped frame would be out-of-bounds
+            if x0 < 0 or y0 < 0 or x1 > frame_w or y1 > frame_h:
                 continue
-            alpha = float(overlay[i][j][3] / 255.0)  # read the alpha channel
-            src[x + i][y + j] = alpha * overlay[i][j][:3] + (1 - alpha) * src[x + i][y + j]
-    return src
+
+            # apply mask
+            frame[y0: y1, x0: x1] = apply_mask(frame[y0: y1, x0: x1], mask)
+
+        # Display the resulting frame
+        cv2.imshow('frame', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    # When everything done, release the capture
+    cap.release()
+    cv2.destroyAllWindows()
 
 
-
-while 1:
-    ret, img = cap.read()
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    faces=face_cascade.detectMultiScale(img, 1.2, 5, 0, (120, 120), (350, 350))
-    for (x, y, w, h) in faces:
-        if h > 0 and w > 0:
-
-            glass_symin = int(y + 1.5 * h / 5)
-            glass_symax = int(y + 2.5 * h / 5)
-            sh_glass = glass_symax - glass_symin
-
-            cigar_symin = int(y + 4 * h / 6)
-            cigar_symax = int(y + 5.5 * h / 6)
-            sh_cigar = cigar_symax - cigar_symin
-
-            face_glass_roi_color = img[glass_symin:glass_symax, x:x+w]
-            face_cigar_roi_color = img[cigar_symin:cigar_symax, x:x+w]
-
-            specs = cv2.resize(specs_ori, (w, sh_glass),interpolation=cv2.INTER_CUBIC)
-            cigar= cv2.resize(cigar_ori, (w, sh_cigar),interpolation=cv2.INTER_CUBIC)
-            transparentOverlay(face_glass_roi_color,specs)
-            transparentOverlay(face_cigar_roi_color,cigar,(int(w/2),int(sh_cigar/2)))
-
-    cv2.imshow('Thugs Life', img)
-
-    k = cv2.waitKey(30) & 0xff
-    if k == 27:
-        cv2.imwrite('img.jpg', img)
-        break
-
-cap.release()
-
-cv2.destroyAllWindows()
+if __name__ == '__main__':
+    main()
